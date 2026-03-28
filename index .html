@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Simulación de motor y engranajes</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: rgba(12, 18, 36, 0.86);
+      --line: rgba(255,255,255,0.12);
+      --text: #eaf1ff;
+      --muted: #9eb0d1;
+      --accent: #7cc7ff;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      font-family: Inter, Arial, sans-serif;
+      background: radial-gradient(circle at top, #16213d 0%, #09101f 50%, #04070f 100%);
+      color: var(--text);
+    }
+    #app { position: relative; width: 100%; height: 100%; }
+    canvas { display: block; width: 100%; height: 100%; }
+    .ui {
+      position: absolute;
+      top: 14px;
+      left: 14px;
+      width: 400px;
+      max-width: calc(100vw - 28px);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 14px;
+      backdrop-filter: blur(10px);
+      z-index: 10;
+      box-shadow: 0 18px 60px rgba(0,0,0,0.35);
+    }
+    .title { font-size: 21px; font-weight: 800; margin-bottom: 6px; }
+    .subtitle { font-size: 13px; color: var(--muted); line-height: 1.35; margin-bottom: 12px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .field, .stat {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px;
+    }
+    .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+    .field input, .field select {
+      width: 100%;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.08);
+      color: white;
+      padding: 9px 10px;
+      outline: none;
+      font-size: 14px;
+    }
+    .field input[type='range'] { padding: 0; border: none; accent-color: var(--accent); background: transparent; }
+    .stats { margin-top: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .k { font-size: 11px; color: var(--muted); text-transform: uppercase; margin-bottom: 4px; }
+    .v { font-size: 20px; font-weight: 800; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+    button {
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.06);
+      color: white;
+      padding: 9px 12px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-weight: 700;
+    }
+    button:hover { background: rgba(255,255,255,0.12); }
+    .legend {
+      position: absolute;
+      bottom: 14px;
+      left: 14px;
+      max-width: 460px;
+      background: rgba(10, 14, 28, 0.78);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px 14px;
+      font-size: 13px;
+      line-height: 1.45;
+      color: var(--muted);
+      z-index: 10;
+    }
+    .topright {
+      position: absolute;
+      top: 14px;
+      right: 14px;
+      background: rgba(10, 14, 28, 0.78);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 10px 12px;
+      color: var(--muted);
+      font-size: 13px;
+      z-index: 10;
+      max-width: 420px;
+    }
+    .badge {
+      display: inline-block;
+      margin-left: 6px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.07);
+      border: 1px solid var(--line);
+      color: white;
+      font-weight: 800;
+    }
+    @media (max-width: 900px) {
+      .ui { width: calc(100vw - 28px); }
+      .topright { display: none; }
+      .legend { max-width: calc(100vw - 28px); }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <canvas id="sim"></canvas>
+
+    <div class="ui">
+      <div class="title">Motor descubierto + caja de cambios</div>
+      <div class="subtitle">
+        Ya quedó corregido para que <b>sí ejecute</b> sin librerías externas. Ahora el motor, ejes y engranajes se dibujan directo en canvas y reaccionan en tiempo real.
+      </div>
+      <div class="grid">
+        <div class="field">
+          <label>RPM objetivo del motor</label>
+          <input id="rpmInput" type="number" value="2200" min="700" max="9000" step="50">
+        </div>
+        <div class="field">
+          <label>Torque del motor (Nm)</label>
+          <input id="torqueInput" type="number" value="180" min="20" max="900" step="5">
+        </div>
+        <div class="field">
+          <label>Marcha</label>
+          <select id="gearSelect">
+            <option value="0">Neutro</option>
+            <option value="1">1ra</option>
+            <option value="2">2da</option>
+            <option value="3" selected>3ra</option>
+            <option value="4">4ta</option>
+            <option value="5">5ta</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Eficiencia (%)</label>
+          <input id="efficiencyInput" type="number" value="92" min="60" max="100" step="1">
+        </div>
+        <div class="field">
+          <label>Embrague: <span id="clutchValue">0.85</span></label>
+          <input id="clutchInput" type="range" min="0" max="1" step="0.01" value="0.85">
+        </div>
+        <div class="field">
+          <label>Carga salida: <span id="loadValue">35</span> Nm</label>
+          <input id="loadInput" type="range" min="0" max="300" step="1" value="35">
+        </div>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><div class="k">RPM motor</div><div class="v" id="engineRpmStat">0</div></div>
+        <div class="stat"><div class="k">RPM salida</div><div class="v" id="outputRpmStat">0</div></div>
+        <div class="stat"><div class="k">Torque salida</div><div class="v" id="outputTorqueStat">0</div></div>
+        <div class="stat"><div class="k">Potencia</div><div class="v" id="powerStat">0</div></div>
+      </div>
+
+      <div class="row">
+        <button id="toggleRunBtn">Pausar</button>
+        <button id="resetBtn">Reiniciar</button>
+        <button id="viewBtn">Vista inclinada</button>
+      </div>
+    </div>
+
+    <div class="topright">
+      Teclado: <b>↑ ↓</b> RPM, <b>← →</b> torque, <b>1-5</b> marcha, <b>0</b> neutro, <b>C/V</b> embrague, <b>B/N</b> carga, <b>Espacio</b> pausa
+      <div style="margin-top:6px;">Marcha actual <span class="badge" id="gearBadge">3ra</span></div>
+    </div>
+
+    <div class="legend">
+      <b>Qué corregí:</b> antes dependía de una librería 3D externa. Ahora corre directo en el navegador con JavaScript puro.<br><br>
+      <b>Qué verás:</b> volante del motor, embrague, eje primario, eje secundario, par de engranajes activo y salida final. Si cambias RPM, torque o marcha, el resto se afecta de forma acoplada.
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('sim');
+    const ctx = canvas.getContext('2d');
+
+    const rpmInput = document.getElementById('rpmInput');
+    const torqueInput = document.getElementById('torqueInput');
+    const gearSelect = document.getElementById('gearSelect');
+    const efficiencyInput = document.getElementById('efficiencyInput');
+    const clutchInput = document.getElementById('clutchInput');
+    const clutchValue = document.getElementById('clutchValue');
+    const loadInput = document.getElementById('loadInput');
+    const loadValue = document.getElementById('loadValue');
+    const engineRpmStat = document.getElementById('engineRpmStat');
+    const outputRpmStat = document.getElementById('outputRpmStat');
+    const outputTorqueStat = document.getElementById('outputTorqueStat');
+    const powerStat = document.getElementById('powerStat');
+    const gearBadge = document.getElementById('gearBadge');
+
+    let W = 0, H = 0, DPR = Math.min(window.devicePixelRatio || 1, 2);
+    let running = true;
+    let tiltedView = true;
+
+    const ratios = { 0: null, 1: 2.65, 2: 1.85, 3: 1.28, 4: 0.96, 5: 0.78 };
+
+    const state = {
+      engineOmega: 120,
+      primaryOmega: 0,
+      secondaryOmega: 0,
+      outputOmega: 0,
+      engineAngle: 0,
+      primaryAngle: 0,
+      secondaryAngle: 0,
+      outputAngle: 0,
+      J_engine: 0.34,
+      J_primary: 0.22,
+      J_secondary: 0.28,
+      J_output: 0.36,
+      damping: 0.02,
+      clutchK: 22,
+      clutchD: 0.16,
+      finalDrive: 1.35
+    };
+
+    function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+    function rpmToRadps(rpm) { return rpm * Math.PI * 2 / 60; }
+    function radpsToRpm(w) { return w * 60 / (Math.PI * 2); }
+    function activeRatio() { return ratios[Number(gearSelect.value)]; }
+    function gearLabel() {
+      const g = Number(gearSelect.value);
+      if (g === 0) return 'N';
+      return `${g}${g === 1 ? 'ra' : g === 2 ? 'da' : 'ta'}`;
+    }
+
+    function resize() {
+      W = canvas.clientWidth = window.innerWidth;
+      H = canvas.clientHeight = window.innerHeight;
+      canvas.width = W * DPR;
+      canvas.height = H * DPR;
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    clutchInput.addEventListener('input', () => clutchValue.textContent = Number(clutchInput.value).toFixed(2));
+    loadInput.addEventListener('input', () => loadValue.textContent = loadInput.value);
+    clutchValue.textContent = Number(clutchInput.value).toFixed(2);
+    loadValue.textContent = loadInput.value;
+
+    document.getElementById('toggleRunBtn').onclick = () => {
+      running = !running;
+      document.getElementById('toggleRunBtn').textContent = running ? 'Pausar' : 'Reanudar';
+    };
+
+    document.getElementById('resetBtn').onclick = () => {
+      state.engineOmega = rpmToRadps(Number(rpmInput.value) * 0.65);
+      state.primaryOmega = 0;
+      state.secondaryOmega = 0;
+      state.outputOmega = 0;
+      state.engineAngle = 0;
+      state.primaryAngle = 0;
+      state.secondaryAngle = 0;
+      state.outputAngle = 0;
+    };
+
+    document.getElementById('viewBtn').onclick = () => {
+      tiltedView = !tiltedView;
+      document.getElementById('viewBtn').textContent = tiltedView ? 'Vista frontal' : 'Vista inclinada';
+    };
+
+    window.addEventListener('keydown', (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+      if (e.key === 'ArrowUp') rpmInput.value = clamp(Number(rpmInput.value) + 100, 700, 9000);
+      if (e.key === 'ArrowDown') rpmInput.value = clamp(Number(rpmInput.value) - 100, 700, 9000);
+      if (e.key === 'ArrowRight') torqueInput.value = clamp(Number(torqueInput.value) + 5, 20, 900);
+      if (e.key === 'ArrowLeft') torqueInput.value = clamp(Number(torqueInput.value) - 5, 20, 900);
+      if (e.key >= '0' && e.key <= '5') gearSelect.value = e.key;
+      if (e.key.toLowerCase() === 'c') clutchInput.value = clamp(Number(clutchInput.value) + 0.03, 0, 1).toFixed(2);
+      if (e.key.toLowerCase() === 'v') clutchInput.value = clamp(Number(clutchInput.value) - 0.03, 0, 1).toFixed(2);
+      if (e.key.toLowerCase() === 'b') loadInput.value = clamp(Number(loadInput.value) + 5, 0, 300);
+      if (e.key.toLowerCase() === 'n') loadInput.value = clamp(Number(loadInput.value) - 5, 0, 300);
+      if (e.code === 'Space') {
+        e.preventDefault();
+        running = !running;
+        document.getElementById('toggleRunBtn').textContent = running ? 'Pausar' : 'Reanudar';
+      }
+      clutchValue.textContent = Number(clutchInput.value).toFixed(2);
+      loadValue.textContent = loadInput.value;
+    });
+
+    function updatePhysics(dt) {
+      const targetOmega = rpmToRadps(Number(rpmInput.value));
+      const engineTorqueMax = Number(torqueInput.value);
+      const eff = clamp(Number(efficiencyInput.value) / 100, 0.6, 1.0);
+      const clutch = Number(clutchInput.value);
+      const loadTorque = Number(loadInput.value);
+      const ratio = activeRatio();
+
+      const throttleError = targetOmega - state.engineOmega;
+      const controllerTorque = clamp(throttleError * 0.6, -engineTorqueMax * 0.4, engineTorqueMax);
+
+      const clutchTransferTorque = state.clutchK * clutch * (state.engineOmega - state.primaryOmega) + state.clutchD * (state.engineOmega - state.primaryOmega);
+      const clutchTorque = clamp(clutchTransferTorque, -engineTorqueMax * 1.4, engineTorqueMax * 1.4);
+
+      const engineResist = state.damping * state.engineOmega;
+      state.engineOmega += ((controllerTorque - clutchTorque - engineResist) / state.J_engine) * dt;
+      state.engineOmega = Math.max(state.engineOmega, rpmToRadps(500));
+
+      if (ratio === null) {
+        state.primaryOmega += ((clutchTorque - 0.08 * state.primaryOmega) / state.J_primary) * dt;
+        state.secondaryOmega += ((-0.1 * state.secondaryOmega) / state.J_secondary) * dt;
+        state.outputOmega += ((-0.13 * state.outputOmega - loadTorque * 0.03 * Math.sign(state.outputOmega || 1)) / state.J_output) * dt;
+      } else {
+        const idealSecondary = -(state.primaryOmega / ratio);
+        const meshError = idealSecondary - state.secondaryOmega;
+        const meshTorque = meshError * 42;
+
+        state.primaryOmega += ((clutchTorque - meshTorque - 0.06 * state.primaryOmega) / state.J_primary) * dt;
+        const outLoadReflected = (loadTorque / (state.finalDrive * eff));
+        state.secondaryOmega += (((meshTorque * ratio * eff) - 0.08 * state.secondaryOmega - outLoadReflected * Math.sign(state.secondaryOmega || -1)) / state.J_secondary) * dt;
+
+        const targetOutput = -(state.secondaryOmega / state.finalDrive);
+        const outputCoupling = (targetOutput - state.outputOmega) * 30;
+        state.outputOmega += ((outputCoupling - 0.12 * state.outputOmega - loadTorque * 0.03 * Math.sign(state.outputOmega || 1)) / state.J_output) * dt;
+      }
+
+      state.engineAngle += state.engineOmega * dt;
+      state.primaryAngle += state.primaryOmega * dt;
+      state.secondaryAngle += state.secondaryOmega * dt;
+      state.outputAngle += state.outputOmega * dt;
+    }
+
+    function project(x, y, z) {
+      const skew = tiltedView ? 0.42 : 0.0;
+      const lift = tiltedView ? 0.18 : 0.0;
+      return {
+        x: x + z * skew,
+        y: y - z * lift
+      };
+    }
+
+    function drawShaft(x1, y1, x2, y2, thickness, color) {
+      const g = ctx.createLinearGradient(x1, y1 - thickness, x2, y2 + thickness);
+      g.addColorStop(0, '#eef5ff');
+      g.addColorStop(0.25, color);
+      g.addColorStop(0.5, '#788292');
+      g.addColorStop(0.75, color);
+      g.addColorStop(1, '#eef5ff');
+      ctx.strokeStyle = g;
+      ctx.lineWidth = thickness;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+      ctx.lineWidth = Math.max(1, thickness * 0.18);
+      ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+      ctx.beginPath();
+      ctx.moveTo(x1, y1 - thickness * 0.18);
+      ctx.lineTo(x2, y2 - thickness * 0.18);
+      ctx.stroke();
+    }
+
+    function drawGear(cx, cy, r, teeth, angle, fill, glow = false) {
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(angle);
+      if (glow) {
+        ctx.shadowColor = fill;
+        ctx.shadowBlur = 20;
+      }
+      ctx.beginPath();
+      for (let i = 0; i < teeth * 2; i++) {
+        const a = (Math.PI * 2 * i) / (teeth * 2);
+        const rr = i % 2 === 0 ? r * 1.02 : r * 1.18;
+        const x = Math.cos(a) * rr;
+        const y = Math.sin(a) * rr;
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      const g = ctx.createRadialGradient(-r * 0.3, -r * 0.3, r * 0.2, 0, 0, r * 1.2);
+      g.addColorStop(0, '#f4f8ff');
+      g.addColorStop(0.18, fill);
+      g.addColorStop(0.7, shade(fill, -25));
+      g.addColorStop(1, shade(fill, -55));
+      ctx.fillStyle = g;
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.55, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(25,30,42,0.85)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+      ctx.stroke();
+
+      for (let i = 0; i < 6; i++) {
+        const a = (Math.PI * 2 * i) / 6 + angle * 0.2;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(a) * r * 0.18, Math.sin(a) * r * 0.18);
+        ctx.lineTo(Math.cos(a) * r * 0.48, Math.sin(a) * r * 0.48);
+        ctx.strokeStyle = 'rgba(255,255,255,0.14)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    function drawFlywheel(cx, cy, r, angle) {
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(angle);
+      const g = ctx.createRadialGradient(-r * 0.3, -r * 0.3, r * 0.2, 0, 0, r * 1.1);
+      g.addColorStop(0, '#fbfdff');
+      g.addColorStop(0.2, '#b9c2cf');
+      g.addColorStop(0.75, '#6e7787');
+      g.addColorStop(1, '#404857');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(0, 0, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.62, 0, Math.PI * 2);
+      ctx.fillStyle = '#1a2130';
+      ctx.fill();
+      for (let i = 0; i < 8; i++) {
+        const a = (Math.PI * 2 * i) / 8;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(a) * r * 0.2, Math.sin(a) * r * 0.2);
+        ctx.lineTo(Math.cos(a) * r * 0.85, Math.sin(a) * r * 0.85);
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    function drawHousing(x, y, w, h) {
+      const g = ctx.createLinearGradient(x, y, x, y + h);
+      g.addColorStop(0, 'rgba(72,84,110,0.65)');
+      g.addColorStop(1, 'rgba(30,38,54,0.55)');
+      ctx.fillStyle = g;
+      roundRect(x, y, w, h, 24, true, false);
+      ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+      ctx.lineWidth = 2;
+      roundRect(x, y, w, h, 24, false, true);
+    }
+
+    function roundRect(x, y, w, h, r, fill, stroke) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r);
+      ctx.arcTo(x, y, x + w, y, r);
+      ctx.closePath();
+      if (fill) ctx.fill();
+      if (stroke) ctx.stroke();
+    }
+
+    function drawArrowLabel(text, x1, y1, x2, y2) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+      const a = Math.atan2(y2 - y1, x2 - x1);
+      ctx.beginPath();
+      ctx.moveTo(x2, y2);
+      ctx.lineTo(x2 - Math.cos(a - 0.35) * 12, y2 - Math.sin(a - 0.35) * 12);
+      ctx.lineTo(x2 - Math.cos(a + 0.35) * 12, y2 - Math.sin(a + 0.35) * 12);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.fill();
+      ctx.fillStyle = 'white';
+      ctx.font = 'bold 16px Arial';
+      ctx.fillText(text, x1 - 10, y1 - 10);
+    }
+
+    function shade(hex, amt) {
+      let c = hex.replace('#', '');
+      if (c.length === 3) c = c.split('').map(v => v + v).join('');
+      let num = parseInt(c, 16);
+      let r = clamp((num >> 16) + amt, 0, 255);
+      let g = clamp(((num >> 8) & 0x00FF) + amt, 0, 255);
+      let b = clamp((num & 0x0000FF) + amt, 0, 255);
+      return `rgb(${r},${g},${b})`;
+    }
+
+    function updateStats() {
+      const ratio = activeRatio();
+      const eff = Number(efficiencyInput.value) / 100;
+      const outTorque = Math.abs(Number(torqueInput.value) * (ratio || 0) * eff * state.finalDrive * Number(clutchInput.value));
+      const powerKw = Math.abs(state.engineOmega * Number(torqueInput.value) / 1000);
+      engineRpmStat.textContent = radpsToRpm(state.engineOmega).toFixed(0);
+      outputRpmStat.textContent = Math.abs(radpsToRpm(state.outputOmega)).toFixed(0);
+      outputTorqueStat.textContent = outTorque.toFixed(0) + ' Nm';
+      powerStat.textContent = powerKw.toFixed(1) + ' kW';
+      gearBadge.textContent = gearLabel();
+    }
+
+    function drawScene() {
+      ctx.clearRect(0, 0, W, H);
+
+      const floorY = H * 0.78;
+      const g = ctx.createLinearGradient(0, 0, 0, H);
+      g.addColorStop(0, '#0f1730');
+      g.addColorStop(1, '#050910');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, W, H);
+
+      ctx.strokeStyle = 'rgba(130,170,255,0.09)';
+      ctx.lineWidth = 1;
+      for (let i = 0; i < W; i += 40) {
+        ctx.beginPath();
+        ctx.moveTo(i, floorY);
+        ctx.lineTo(i - 140, H);
+        ctx.stroke();
+      }
+      for (let j = floorY; j < H; j += 32) {
+        ctx.beginPath();
+        ctx.moveTo(0, j);
+        ctx.lineTo(W, j);
+        ctx.stroke();
+      }
+
+      const centerX = W * 0.54;
+      const centerY = H * 0.49;
+      const scale = Math.min(W / 1500, H / 850);
+
+      const zTop = 160 * scale;
+      const zBottom = -160 * scale;
+      const engineX = centerX - 490 * scale;
+      const boxX = centerX - 90 * scale;
+      const outX = centerX + 390 * scale;
+      const topY = centerY - 70 * scale;
+      const bottomY = centerY + 120 * scale;
+
+      const pEngine = project(engineX, topY, zTop);
+      const pClutch = project(engineX + 160 * scale, topY, zTop);
+      const pPrimaryStart = project(boxX - 170 * scale, topY, zTop);
+      const pPrimaryEnd = project(boxX + 360 * scale, topY, zTop);
+      const pSecondaryStart = project(boxX - 140 * scale, bottomY, zBottom);
+      const pSecondaryEnd = project(boxX + 330 * scale, bottomY, zBottom);
+      const pOutputStart = project(outX - 140 * scale, bottomY, zBottom);
+      const pOutputEnd = project(outX + 180 * scale, bottomY, zBottom);
+
+      drawHousing(boxX - 240 * scale, centerY - 180 * scale, 700 * scale, 390 * scale);
+      drawShaft(pEngine.x + 35 * scale, pEngine.y, pPrimaryStart.x, pPrimaryStart.y, 22 * scale, '#a7b2c5');
+      drawShaft(pPrimaryStart.x, pPrimaryStart.y, pPrimaryEnd.x, pPrimaryEnd.y, 18 * scale, '#bcc8d8');
+      drawShaft(pSecondaryStart.x, pSecondaryStart.y, pSecondaryEnd.x, pSecondaryEnd.y, 18 * scale, '#b0b8c8');
+      drawShaft(pSecondaryEnd.x, pSecondaryEnd.y, pOutputEnd.x, pOutputEnd.y, 14 * scale, '#c8d2df');
+
+      drawFlywheel(pEngine.x, pEngine.y, 70 * scale, state.engineAngle);
+      drawGear(pClutch.x, pClutch.y, 40 * scale, 18, state.engineAngle, '#c89c4d');
+
+      const gearData = [
+        { x: boxX - 100 * scale, rp: 42 * scale, rs: 88 * scale, tp: 14, ts: 28 },
+        { x: boxX + 55 * scale, rp: 55 * scale, rs: 80 * scale, tp: 18, ts: 24 },
+        { x: boxX + 205 * scale, rp: 68 * scale, rs: 69 * scale, tp: 21, ts: 21 },
+        { x: boxX + 350 * scale, rp: 78 * scale, rs: 60 * scale, tp: 24, ts: 18 },
+        { x: boxX + 485 * scale, rp: 90 * scale, rs: 52 * scale, tp: 28, ts: 16 }
+      ];
+
+      const active = Number(gearSelect.value);
+      gearData.forEach((g, i) => {
+        const pt = project(g.x, topY, zTop);
+        const pb = project(g.x, bottomY, zBottom);
+        drawGear(pt.x, pt.y, g.rp, g.tp, state.primaryAngle, i + 1 === active ? '#8fbefb' : '#8d98ab', i + 1 === active);
+        drawGear(pb.x, pb.y, g.rs, g.ts, state.secondaryAngle * -1, i + 1 === active ? '#d19c50' : '#717a89', i + 1 === active);
+      });
+
+      const pFinal1 = project(outX - 40 * scale, bottomY, zBottom);
+      const pFinal2 = project(outX + 120 * scale, bottomY, zBottom);
+      drawGear(pFinal1.x, pFinal1.y, 56 * scale, 18, state.outputAngle, '#c69a3a', true);
+      drawGear(pFinal2.x, pFinal2.y, 84 * scale, 26, state.outputAngle * -0.72, '#e0b44d', true);
+
+      ctx.strokeStyle = 'rgba(220,230,255,0.4)';
+      ctx.lineWidth = 6 * scale;
+      ctx.beginPath();
+      ctx.moveTo(pFinal1.x + 52 * scale, pFinal1.y - 18 * scale);
+      ctx.quadraticCurveTo((pFinal1.x + pFinal2.x) / 2, pFinal1.y - 90 * scale, pFinal2.x - 78 * scale, pFinal2.y - 26 * scale);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(pFinal1.x + 52 * scale, pFinal1.y + 18 * scale);
+      ctx.quadraticCurveTo((pFinal1.x + pFinal2.x) / 2, pFinal1.y + 90 * scale, pFinal2.x - 78 * scale, pFinal2.y + 26 * scale);
+      ctx.stroke();
+
+      drawArrowLabel('Desde el cigüeñal', pEngine.x - 120 * scale, pEngine.y - 130 * scale, pEngine.x - 18 * scale, pEngine.y - 14 * scale);
+      drawArrowLabel('Eje primario', pPrimaryStart.x - 80 * scale, pPrimaryStart.y - 110 * scale, pPrimaryStart.x + 10 * scale, pPrimaryStart.y - 8 * scale);
+      drawArrowLabel('Eje secundario', pSecondaryStart.x - 50 * scale, pSecondaryStart.y + 120 * scale, pSecondaryStart.x + 8 * scale, pSecondaryStart.y + 10 * scale);
+      drawArrowLabel('A la rueda', pFinal2.x + 120 * scale, pFinal2.y - 130 * scale, pFinal2.x + 18 * scale, pFinal2.y - 16 * scale);
+
+      const ratio = activeRatio();
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.font = `bold ${20 * scale}px Arial`;
+      ctx.fillText(`Relación activa: ${ratio ? ratio.toFixed(2) + ':1' : 'Neutro'}`, centerX - 120 * scale, centerY - 220 * scale);
+    }
+
+    let last = performance.now();
+    function animate(now) {
+      requestAnimationFrame(animate);
+      const dt = Math.min((now - last) / 1000, 0.03);
+      last = now;
+      if (running) updatePhysics(dt);
+      updateStats();
+      drawScene();
+    }
+
+    animate(performance.now());
+  </script>
+</body>
+</html>
